@@ -7,18 +7,25 @@ const store = createSupabaseStore();
 const app = createApp(store);
 
 export default function handler(req: Request, res: Response) {
-  const matched =
-    (req.headers['x-matched-path'] as string) ||
-    (req.headers['x-vercel-matched-path'] as string) ||
-    req.url;
+  try {
+    const matched =
+      (req.headers['x-matched-path'] as string) ||
+      (req.headers['x-vercel-matched-path'] as string) ||
+      req.url;
 
-  if (matched && typeof matched === 'string') {
-    const urlObj = new URL(matched, 'http://localhost');
-    const pathname = urlObj.pathname.startsWith('/api')
-      ? urlObj.pathname
-      : `/api${urlObj.pathname}`;
-    req.url = pathname + (urlObj.search || '');
+    if (matched && typeof matched === 'string') {
+      const urlObj = new URL(matched, 'http://localhost');
+      const pathname = urlObj.pathname.startsWith('/api')
+        ? urlObj.pathname
+        : `/api${urlObj.pathname}`;
+      req.url = pathname + (urlObj.search || '');
+    }
+
+    return app(req, res);
+  } catch (err: any) {
+    console.error('Serverless error:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err?.message || 'Server error occurred.' });
+    }
   }
-
-  return app(req, res);
 }

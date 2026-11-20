@@ -1213,9 +1213,18 @@ async function getDashboardSummary(store2, userId, referenceDate) {
 
 // server/reminders.ts
 import crypto2 from "node:crypto";
-import { createRequire } from "node:module";
-var require2 = createRequire(import.meta.url);
-var webpush = require2("web-push");
+var webpushLib = null;
+async function getWebPush() {
+  if (!webpushLib) {
+    try {
+      const mod = await import("web-push");
+      webpushLib = mod.default || mod;
+    } catch {
+      webpushLib = null;
+    }
+  }
+  return webpushLib;
+}
 var cachedVapid = null;
 function getVapidConfig() {
   if (cachedVapid) return cachedVapid;
@@ -1223,22 +1232,30 @@ function getVapidConfig() {
   const envPublic = process.env.VAPID_PUBLIC_KEY?.trim();
   const envPrivate = process.env.VAPID_PRIVATE_KEY?.trim();
   if (envPublic && envPrivate) {
-    webpush.setVapidDetails(subject, envPublic, envPrivate);
     cachedVapid = { publicKey: envPublic, privateKey: envPrivate, subject, configured: true };
     return cachedVapid;
   }
-  const generated = webpush.generateVAPIDKeys();
-  webpush.setVapidDetails(subject, generated.publicKey, generated.privateKey);
   cachedVapid = {
-    publicKey: generated.publicKey,
-    privateKey: generated.privateKey,
+    publicKey: envPublic || "",
+    privateKey: envPrivate || "",
     subject,
-    configured: true
+    configured: Boolean(envPublic && envPrivate)
   };
   return cachedVapid;
 }
 async function deliverSingleWebPush(store2, sub, payloadJson) {
-  getVapidConfig();
+  const wp = await getWebPush();
+  if (!wp) {
+    return { ok: false, error: "Push service not available." };
+  }
+  const cfg = getVapidConfig();
+  if (!cfg.configured) {
+    return { ok: false, error: "VAPID keys not configured." };
+  }
+  try {
+    wp.setVapidDetails(cfg.subject, cfg.publicKey, cfg.privateKey);
+  } catch {
+  }
   const subscription = {
     endpoint: sub.endpoint,
     keys: {
@@ -1248,7 +1265,7 @@ async function deliverSingleWebPush(store2, sub, payloadJson) {
   };
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      await webpush.sendNotification(subscription, payloadJson, { TTL: 86400 });
+      await wp.sendNotification(subscription, payloadJson, { TTL: 86400 });
       return { ok: true };
     } catch (err) {
       const statusCode = err?.statusCode;
@@ -2210,13 +2227,20 @@ function createApp(store2, options = {}) {
 var store = createSupabaseStore();
 var app = createApp(store);
 function handler(req, res) {
-  const matched = req.headers["x-matched-path"] || req.headers["x-vercel-matched-path"] || req.url;
-  if (matched && typeof matched === "string") {
-    const urlObj = new URL(matched, "http://localhost");
-    const pathname = urlObj.pathname.startsWith("/api") ? urlObj.pathname : `/api${urlObj.pathname}`;
-    req.url = pathname + (urlObj.search || "");
+  try {
+    const matched = req.headers["x-matched-path"] || req.headers["x-vercel-matched-path"] || req.url;
+    if (matched && typeof matched === "string") {
+      const urlObj = new URL(matched, "http://localhost");
+      const pathname = urlObj.pathname.startsWith("/api") ? urlObj.pathname : `/api${urlObj.pathname}`;
+      req.url = pathname + (urlObj.search || "");
+    }
+    return app(req, res);
+  } catch (err) {
+    console.error("Serverless error:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err?.message || "Server error occurred." });
+    }
   }
-  return app(req, res);
 }
 export {
   handler as default

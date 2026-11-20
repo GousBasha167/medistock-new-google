@@ -5,8 +5,18 @@ import type { MediStockStore, StoredPushSubscription } from './store.ts';
 import { getUserMedicines } from './queries.ts';
 import { getTodayLocalDateStr } from '../src/shared/stockEngine.ts';
 
-const require = createRequire(import.meta.url);
-const webpush = require('web-push') as typeof webpushType;
+let webpushLib: any = null;
+async function getWebPush() {
+  if (!webpushLib) {
+    try {
+      const mod = await import('web-push');
+      webpushLib = mod.default || mod;
+    } catch {
+      webpushLib = null;
+    }
+  }
+  return webpushLib;
+}
 
 interface VapidConfig {
   publicKey: string;
@@ -25,18 +35,15 @@ export function getVapidConfig(): VapidConfig {
   const envPrivate = process.env.VAPID_PRIVATE_KEY?.trim();
 
   if (envPublic && envPrivate) {
-    webpush.setVapidDetails(subject, envPublic, envPrivate);
     cachedVapid = { publicKey: envPublic, privateKey: envPrivate, subject, configured: true };
     return cachedVapid;
   }
 
-  const generated = webpush.generateVAPIDKeys();
-  webpush.setVapidDetails(subject, generated.publicKey, generated.privateKey);
   cachedVapid = {
-    publicKey: generated.publicKey,
-    privateKey: generated.privateKey,
+    publicKey: envPublic || '',
+    privateKey: envPrivate || '',
     subject,
-    configured: true,
+    configured: Boolean(envPublic && envPrivate),
   };
   return cachedVapid;
 }
@@ -46,7 +53,21 @@ async function deliverSingleWebPush(
   sub: StoredPushSubscription,
   payloadJson: string
 ): Promise<{ ok: boolean; error?: string }> {
-  getVapidConfig();
+  const wp = await getWebPush();
+  if (!wp) {
+    return { ok: false, error: 'Push service not available.' };
+  }
+
+  const cfg = getVapidConfig();
+  if (!cfg.configured) {
+    return { ok: false, error: 'VAPID keys not configured.' };
+  }
+
+  try {
+    wp.setVapidDetails(cfg.subject, cfg.publicKey, cfg.privateKey);
+  } catch {
+    // Ignore setVapidDetails errors
+  }
 
   const subscription = {
     endpoint: sub.endpoint,
@@ -58,7 +79,7 @@ async function deliverSingleWebPush(
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      await webpush.sendNotification(subscription, payloadJson, { TTL: 86400 });
+      await wp.sendNotification(subscription, payloadJson, { TTL: 86400 });
       return { ok: true };
     } catch (err: unknown) {
       const statusCode = (err as { statusCode?: number })?.statusCode;
