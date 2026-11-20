@@ -1034,11 +1034,23 @@ export function createApp(store: MediStockStore, options: { skipRateLimit?: bool
 
   // Centralized error handler translating StoreError cleanly
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    if (err instanceof StoreError) {
-      return res.status(err.status).json({ error: err.message, code: err.code });
+    if (
+      err instanceof StoreError ||
+      (err && typeof err === 'object' && ('status' in err || 'code' in err))
+    ) {
+      const anyErr = err as { status?: number; message?: string; code?: string };
+      return res.status(anyErr.status || 500).json({
+        error: anyErr.message || 'Database error occurred.',
+        code: anyErr.code || 'QUERY_FAILED',
+      });
     }
     console.error('Unhandled API error:', err);
-    res.status(500).json({ error: 'An unexpected server error occurred. Please try again.' });
+    res.status(500).json({
+      error:
+        err instanceof Error
+          ? err.message
+          : 'An unexpected server error occurred. Please try again.',
+    });
   });
 
   return app;
