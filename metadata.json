@@ -1,0 +1,6 @@
+{
+  "name": "MediStock",
+  "description": "Never run out of medicines. Family medicine inventory, stock calculation, purchase calendar, and refill reminder application.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
